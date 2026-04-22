@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'adityaalmond.13718@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidProject(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.area is string && data.area.size() <= 200 &&
+             data.type is string && data.type.size() <= 100;
+    }
+
+    function isValidTeam(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.code is string && data.code.size() <= 50 &&
+             data.gdkd is string && data.gdkd.size() <= 200;
+    }
+
+    function isValidLine(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             (data.leaderId == null || isValidId(data.leaderId));
+    }
+
+    function isValidUser(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.email is string && data.email.size() <= 255 &&
+             data.role in ['admin', 'staff'];
+    }
+
+    function isValidTask(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             isValidId(data.projectId) &&
+             data.budget is number && data.budget >= 0 &&
+             data.startDate is string && data.endDate is string &&
+             isValidId(data.assignedLineId) &&
+             data.assignedStaffIds is list;
+    }
+
+    function isValidDailyReport(data) {
+      return data.date is string &&
+             isValidId(data.taskId) &&
+             isValidId(data.staffId) &&
+             data.channel in ['Facebook Ads', 'Google Ads', 'Zalo Ads', 'Other'] &&
+             data.spend is number && data.spend >= 0 &&
+             data.leadsReceived is number && data.leadsReceived >= 0 &&
+             data.leadsNotInterested is number && data.leadsNotInterested >= 0 &&
+             data.leadsNurturing is number && data.leadsNurturing >= 0 &&
+             data.leadsInterested is number && data.leadsInterested >= 0 &&
+             data.siteVisits is number && data.siteVisits >= 0 &&
+             data.closedDeals is number && data.closedDeals >= 0;
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isOwner(userId) && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        (isOwner(userId) && incoming().role == existing().role && isValidUser(incoming())) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidProject(incoming());
+      allow update: if isAdmin() && isValidProject(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidTeam(incoming());
+      allow update: if isAdmin() && isValidTeam(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /lines/{lineId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidLine(incoming());
+      allow update: if isAdmin() && isValidLine(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidTask(incoming());
+      allow update: if isAdmin() && isValidTask(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /dailyReports/{reportId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isOwner(incoming().staffId) || isAdmin()) && isValidDailyReport(incoming());
+      allow update: if isSignedIn() && (isOwner(existing().staffId) || isAdmin()) && isValidDailyReport(incoming());
+      allow delete: if isAdmin();
+    }
+  }
+}
